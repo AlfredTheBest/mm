@@ -147,6 +147,22 @@ class BLIP_Retrieval(nn.Module):
         loss_ita += torch.sum((sim_t2i_kd - ranker_score)**2, dim=1).mean()
 
 
+        # add colbert loss
+        image_feat_colbert = F.normalize(self.vision_proj(image_embeds), dim=-1)
+        text_feat_colbert = F.normalize(self.text_proj(text_output.last_hidden_state), dim=-1)
+        pos_idx_colbert = torch.eq(idx.t(), idx).float()
+        sim_targets_colbert = pos_idx_colbert / pos_idx_colbert.sum(1, keepdim=True)
+
+        sim_i2t_colbert = torch.einsum('abc,dec-> adbe', [image_feat_colbert, text_feat_colbert]).max(
+            -1).values.sum(-1) / self.temp
+        sim_t2i_colbert = torch.einsum('abc,dec-> adbe', [text_feat_colbert, image_feat_colbert]).max(
+            -1).values.sum(-1) / self.temp
+        loss_i2t_colbert = -torch.sum(F.log_softmax(sim_i2t_colbert, dim=1) * sim_targets_colbert, dim=1).mean()
+        loss_t2i_colbert = -torch.sum(F.log_softmax(sim_t2i_colbert, dim=1) * sim_targets_colbert, dim=1).mean()
+        loss_ita += (loss_i2t_colbert + loss_t2i_colbert) / 2
+
+
+
 ##-----------------------------------------------
 
 

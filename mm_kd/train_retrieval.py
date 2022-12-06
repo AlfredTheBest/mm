@@ -14,6 +14,8 @@ import time
 import datetime
 import json
 from pathlib import Path
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2,3"
+
 
 import torch
 import torch.nn as nn
@@ -80,24 +82,28 @@ def evaluation_two_tower(model, data_loader, device, config):
     num_text = len(texts)
     text_bs = 256
     text_ids = []
-    text_embeds = []  
+    text_embeds = []
+    text_embeds_all = []
     text_atts = []
     for i in range(0, num_text, text_bs):
         text = texts[i: min(num_text, i+text_bs)]
         text_input = model.tokenizer(text, padding='max_length', truncation=True, max_length=35, return_tensors="pt").to(device) 
         text_output = model.text_encoder(text_input.input_ids, attention_mask = text_input.attention_mask, mode='text')  
         text_embed = F.normalize(model.text_proj(text_output.last_hidden_state[:,0,:]))
+        text_embeds_all.append(F.normalize(model.text_proj(text_output.last_hidden_state)))
         text_embeds.append(text_embed)   
         text_ids.append(text_input.input_ids)
         text_atts.append(text_input.attention_mask)
     
     text_embeds = torch.cat(text_embeds,dim=0)
+    text_embeds_all= torch.cat(text_embeds_all,dim=0)
     text_ids = torch.cat(text_ids,dim=0)
     text_atts = torch.cat(text_atts,dim=0)
     text_ids[:,0] = model.tokenizer.enc_token_id
     
     image_feats = []
     image_embeds = []
+    image_embeds_all = []
     for image, img_id in data_loader: 
         image = image.to(device) 
         image_feat = model.visual_encoder(image)   
@@ -106,11 +112,22 @@ def evaluation_two_tower(model, data_loader, device, config):
         
         image_feats.append(image_feat.cpu())
         image_embeds.append(image_embed)
+        image_embeds_all.append(F.normalize(model.vision_proj(image_feat), dim=-1))
      
     image_feats = torch.cat(image_feats,dim=0)
     image_embeds = torch.cat(image_embeds,dim=0)
+    image_embeds_all = torch.cat(image_embeds_all,dim=0)
     
     sims_matrix = image_embeds @ text_embeds.t()
+    sims_matrix_colbert = []
+    for image_embeds_single in (image_embeds_all):
+        # sims_matrix_single = torch.einsum('nmj,ikj->nikm', [image_embeds_single.unsqueeze(0), text_embeds_all]).max(-1).values.sum(-1)
+        sims_matrix_single = torch.einsum('nmj,ikj->nimk', [image_embeds_single.unsqueeze(0), text_embeds_all])\
+            .max(-1).values.sum(-1)
+        sims_matrix_colbert.append(sims_matrix_single)
+    sims_matrix_colbert = torch.cat(sims_matrix_colbert,dim=0)
+    sims_matrix = sims_matrix + sims_matrix_colbert
+
     score_matrix_i2t = torch.full((len(data_loader.dataset.image),len(texts)),-100.0).to(device)
     
     num_tasks = utils.get_world_size()
