@@ -121,9 +121,11 @@ def evaluation_two_tower(model, data_loader, device, config):
     sims_matrix = image_embeds @ text_embeds.t()
     sims_matrix_colbert = []
     for image_embeds_single in (image_embeds_all):
-        # sims_matrix_single = torch.einsum('nmj,ikj->nikm', [image_embeds_single.unsqueeze(0), text_embeds_all]).max(-1).values.sum(-1)
-        sims_matrix_single = torch.einsum('nmj,ikj->nimk', [image_embeds_single.unsqueeze(0), text_embeds_all])\
-            .max(-1).values.sum(-1)
+        sims_matrix_single = torch.einsum('nmj,ikj->nimk', [image_embeds_single.unsqueeze(0), text_embeds_all])
+        padding_mask = text_ids.ne(0).unsqueeze(0).unsqueeze(-2).expand(sims_matrix_single.shape).cuda()
+        sims_matrix_single = sims_matrix_single * padding_mask
+        sims_matrix_single = sims_matrix_single.max(-1).values.sum(-1)
+
         sims_matrix_colbert.append(sims_matrix_single)
     sims_matrix_colbert = torch.cat(sims_matrix_colbert,dim=0)
     sims_matrix = sims_matrix + sims_matrix_colbert
